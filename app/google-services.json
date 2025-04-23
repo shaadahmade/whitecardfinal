@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "162214361636",
+    "project_id": "witecarddata",
+    "storage_bucket": "witecarddata.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:162214361636:android:53cfbff4c561bb923276b1",
+        "android_client_info": {
+          "package_name": "com.example.whitecard"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCuG7cxWgvXACjiMcOYmoHuy8eDV40E53I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
