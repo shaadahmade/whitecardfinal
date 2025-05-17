@@ -94,22 +94,11 @@ fun UpdateCardScreen(navController: NavController) {
                 ),
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(
-                            active = true,
-                            activeContent = @Composable {
-
-                                androidx.compose.material3.Icon(
-                                    imageVector = Icons.Default.ArrowBackIosNew,
-                                    contentDescription = "Back",
-                                    tint = Color.White
-                                )
-                            }
-
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.ArrowBackIosNew,
+                            contentDescription = "Back",
+                            tint = Color.White
                         )
-
-
-
-
                     }
                 }
             )

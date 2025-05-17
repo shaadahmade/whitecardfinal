@@ -147,6 +147,25 @@ fun CardTemplatesScreen(navController: NavController) {
                 primaryBackgroundColor = Color(0xFF046307), // First color of gradient
                 textColor = Color.White,
                 accentColor = Color(0xFFFFD700)
+            ),
+            CardTemplate(
+                id = "ocean",
+                name = "Ocean",
+                backgroundGradient = Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF0CE8BB),
+                        Color(0xFF2E8B57)
+                    )
+                ),
+                primaryBackgroundColor = Color(0xFF174617), // First color of gradient
+                textColor = Color.White,
+                accentColor = Color(0xFFFFFFFF)
+
+
+
+
+
+
             )
         )
     }

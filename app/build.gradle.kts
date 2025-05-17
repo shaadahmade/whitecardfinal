@@ -3,7 +3,9 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     id("com.google.gms.google-services")
+
 }
+
 
 android {
     namespace = "com.example.whitecard"
@@ -60,6 +62,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
     implementation("androidx.activity:activity-compose:1.7.2")
+    implementation ("androidx.compose.material:material:1.5.0")
+
+
 
     // Compose
     implementation(platform("androidx.compose:compose-bom:2023.05.01"))
@@ -77,15 +82,23 @@ dependencies {
     implementation("com.google.firebase:firebase-storage-ktx")
     implementation ("com.google.mlkit:barcode-scanning:17.3.0")
     implementation ("com.google.firebase:firebase-messaging-ktx:23.4.0")
+    implementation (platform("com.google.firebase:firebase-bom:32.5.0"))
+    implementation ("com.google.firebase:firebase-auth-ktx")
+
+
+    // Google Play Services Auth
+    implementation ("com.google.android.gms:play-services-auth:20.7.0")
 
     // Firebase Auth (if you're not already using it)
-    implementation ("com.google.firebase:firebase-auth-ktx:22.3.1")
+
 
     // Firebase Firestore (if you're not already using it)
     implementation ("com.google.firebase:firebase-firestore-ktx:24.10.0")
+    implementation ("com.google.android.gms:play-services-auth:20.7.0")
 
     // Kotlin Coroutines support for Firebase
     implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+
 
     // QR code scanning
     implementation("com.google.mlkit:barcode-scanning:17.1.0")
@@ -99,6 +112,17 @@ dependencies {
 
 
     implementation ("androidx.work:work-runtime-ktx:2.8.1")
+
+
+
+    //coil
+    implementation("io.coil-kt:coil-compose:2.5.0")
+
+
+    implementation("com.google.mlkit:face-detection:16.1.5")
+    implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
+
+
 
 
 
@@ -116,9 +140,25 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
-    dependencies {
+
         implementation("androidx.core:core-splashscreen:1.0.1")
-    }
+
+
+    implementation ("com.google.mlkit:text-recognition:16.0.0")
+
+    // ML Kit Face Detection
+    implementation("com.google.mlkit:face-detection:16.1.5")
+    implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
+
+    // CameraX
+     val camerax_version = "1.3.0"
+    implementation ("androidx.camera:camera-core:${camerax_version}")
+    implementation ("androidx.camera:camera-camera2:${camerax_version}")
+    implementation ("androidx.camera:camera-lifecycle:${camerax_version}")
+    implementation ("androidx.camera:camera-view:${camerax_version}")
+
+
+
 
 }
 
