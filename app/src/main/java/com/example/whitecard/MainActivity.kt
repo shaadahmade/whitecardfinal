@@ -26,6 +26,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.whitecard.firebase.FirestoreManager
 import com.example.whitecard.screens.ArticleDetailScreen
 
 import com.example.whitecard.screens.CardTemplatesScreen
@@ -59,6 +60,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         enableEdgeToEdge()
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE);
 
         
 
@@ -89,13 +91,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppNavigation(auth: FirebaseAuth) {
     val navController = rememberNavController()
-    val startDestination = if (auth.currentUser != null) "main" else "login"
+    val startDestination = if (auth.currentUser != null && auth.currentUser!!.isEmailVerified
+        && auth.currentUser!!.displayName != null && auth.currentUser!!.displayName!!.isNotEmpty()) "main" else "login"
     val viewModel = mainscreenviewmlodel()
 
     NavHost(navController = navController, startDestination = startDestination) {
         if (auth.currentUser != null) {
             composable("your_cards") {
-                YourCardsScreen(navController = navController, viewModel = mainscreenviewmlodel())
+                YourCardsScreen(navController = navController)
             }
         }
 
@@ -109,12 +112,14 @@ fun AppNavigation(auth: FirebaseAuth) {
             WelcomeScreen(navController = navController)
         }
         composable("aadhaar_verification") {
-            AadhaarVerificationScreen(navController = navController)
+            AadhaarVerificationScreen(navController = navController )
         }
         composable("pan_verification") {
             PanVerificationScreen(navController = navController)
         }
         composable("license_verification") {
+
+
             LicenseVerificationScreen(navController = navController)
         }
         composable("splash") {

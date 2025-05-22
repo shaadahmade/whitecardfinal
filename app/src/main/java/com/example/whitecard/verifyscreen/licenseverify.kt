@@ -1,419 +1,238 @@
 package com.example.whitecard.verifyscreen
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.*
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
-import com.example.whitecard.qrutils.isValidDrivingLicense
-import androidx.compose.runtime.LaunchedEffect
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import kotlinx.coroutines.launch
-import androidx.camera.core.*
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.navigation.NavController
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
+import java.util.regex.Pattern
+import androidx.camera.core.ExperimentalGetImage
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ErrorOutline
+import com.google.firebase.Timestamp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LicenseVerificationScreen(navController: NavController) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var hasCameraPermission by remember { mutableStateOf(false) }
+    var flashEnabled by remember { mutableStateOf(false) }
+    var licenseNumber by remember { mutableStateOf("") }
+    var expiryDate by remember { mutableStateOf("") }
+    var holderName by remember { mutableStateOf("") }
+    var detectionState by remember { mutableStateOf<DetectionState>(DetectionState.Scanning) }
+    var processingFrame by remember { mutableStateOf(false) }
+    var scanTimeoutActive by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
+
+    // Firebase
+    val auth = FirebaseAuth.getInstance()
+    val db = FirebaseFirestore.getInstance()
+
+    // Camera
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     val textRecognizer = remember { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+    var camera by remember { mutableStateOf<Camera?>(null) }
 
-    var dlNumber by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf("") }
-    var showSuccessIndicator by remember { mutableStateOf(false) }
-    var isScannerActive by remember { mutableStateOf(false) }
-    var hasCameraPermission by remember { mutableStateOf(false) }
+    // Animation for scanning line
+    val infiniteTransition = rememberInfiniteTransition()
+    val scannerLineY = infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        )
+    )
 
+    // Camera Permission launcher
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
+        contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasCameraPermission = isGranted
-        if (isGranted) {
-            isScannerActive = true
-        } else {
-            errorMessage = "Camera permission is required to scan license"
+        if (!isGranted) {
+            detectionState = DetectionState.Error("Camera permission required")
         }
     }
 
-    // Check camera permission on first launch
-    LaunchedEffect(Unit) {
-        val hasPermission = ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.CAMERA
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-        hasCameraPermission = hasPermission
+    // Check camera permission once
+    LaunchedEffect(key1 = true) {
+        val permission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
+        if (permission == PackageManager.PERMISSION_GRANTED) {
+            hasCameraPermission = true
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
     }
 
-    val validInput = dlNumber.length == 16 && isValidDrivingLicense(dlNumber)
-    val coroutineScope = rememberCoroutineScope()
+    // Reset scan after timeout
+    LaunchedEffect(scanTimeoutActive) {
+        if (scanTimeoutActive) {
+            delay(20000)
+            if (detectionState is DetectionState.Scanning) {
+                detectionState = DetectionState.Error("Scanning timeout. Please try again.")
+                scanTimeoutActive = false
+            }
+        }
+    }
 
-    // Define gradient colors for the background
-    val gradientColors = listOf(
-        MaterialTheme.colorScheme.surface,
-        MaterialTheme.colorScheme.surfaceVariant
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = gradientColors,
-                    startY = 0f,
-                    endY = 2000f
-                )
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "Scan Driving License",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
-    ) {
+        }
+    ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(paddingValues),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header section with brand and progress
-            Card(
+            LinearProgressIndicator(
+                progress = 1f,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 16.dp),
-                elevation = CardDefaults.cardElevation(4.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
+                    .padding(horizontal = 16.dp)
+            )
+
+            Text(
+                text = when (detectionState) {
+                    is DetectionState.Scanning -> "Position your Driving License within the frame"
+                    is DetectionState.Success -> "Driving License detected"
+                    is DetectionState.Error -> (detectionState as DetectionState.Error).message
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(350.dp)
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "WHITE CARD",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    LinearProgressIndicator(
-                        progress = 1f,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Step 3 of 3",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            text = "100%",
-                            style = MaterialTheme.typography.bodySmall
+                when {
+                    !hasCameraPermission -> {
+                        CameraPermissionRequired {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    }
+                    detectionState is DetectionState.Success -> {
+                        LicenseResultView(
+                            licenseNumber = licenseNumber,
+                            expiryDate = expiryDate,
+                            holderName = holderName
                         )
                     }
-                }
-            }
+                    else -> {
+                        CameraPreview(
+                            flashEnabled = flashEnabled,
+                            onCameraReady = { cam -> camera = cam },
+                            processImageForLicense = { imageProxy ->
+                                if (!processingFrame) {
+                                    processingFrame = true
+                                    processImageForLicense(
+                                        imageProxy = imageProxy,
+                                        textRecognizer = textRecognizer
+                                    ) { detectedLicense, detectedExpiry, detectedName ->
+                                        if (detectedLicense.isNotEmpty()) {
+                                            licenseNumber = detectedLicense
+                                            expiryDate = detectedExpiry
+                                            holderName = detectedName
+                                            detectionState = DetectionState.Success
+                                            scanTimeoutActive = false
+                                        }
+                                        processingFrame = false
+                                    }
+                                } else {
+                                    imageProxy.close()
+                                }
+                            }
+                        )
+                        ScannerOverlay(scannerLineY = scannerLineY.value, scanningActive = detectionState is DetectionState.Scanning)
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Title
-            Text(
-                text = "Driving License Verification",
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.Bold
-                ),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(vertical = 16.dp)
-            )
-
-            Text(
-                text = "Please scan your driving license to complete verification",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            // Main verification card
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                elevation = CardDefaults.cardElevation(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    if (isScannerActive && hasCameraPermission) {
-                        // Camera preview
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(3f / 4f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .border(
-                                    width = 2.dp,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    shape = RoundedCornerShape(12.dp)
-                                )
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.TopEnd
                         ) {
-                            AndroidView(
-                                factory = { context ->
-                                    val previewView = PreviewView(context).apply {
-                                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                                    }
-
-                                    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                                    cameraProviderFuture.addListener({
-                                        val cameraProvider = cameraProviderFuture.get()
-
-                                        val preview = Preview.Builder()
-                                            .build()
-                                            .also {
-                                                it.setSurfaceProvider(previewView.surfaceProvider)
-                                            }
-
-                                        val imageAnalyzer = ImageAnalysis.Builder()
-                                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                            .build()
-                                            .also {
-                                                it.setAnalyzer(cameraExecutor) { imageProxy ->
-                                                    processImageProxy(
-                                                        imageProxy,
-                                                        textRecognizer
-                                                    ) { recognizedText ->
-                                                        // Extract driving license number from text
-                                                        val potentialDlNumbers = recognizedText.text
-                                                            .replace(" ", "")
-                                                            .replace("\n", " ")
-                                                            .split(" ")
-                                                            .filter { it.length == 16 && it.all { char -> char.isLetterOrDigit() } }
-
-                                                        if (potentialDlNumbers.isNotEmpty()) {
-                                                            val candidateDlNumber = potentialDlNumbers.first().uppercase()
-                                                            if (isValidDrivingLicense(candidateDlNumber)) {
-                                                                dlNumber = candidateDlNumber
-                                                                isScannerActive = false
-                                                                showSuccessIndicator = true
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                        try {
-                                            cameraProvider.unbindAll()
-                                            cameraProvider.bindToLifecycle(
-                                                lifecycleOwner,
-                                                CameraSelector.DEFAULT_BACK_CAMERA,
-                                                preview,
-                                                imageAnalyzer
-                                            )
-                                        } catch (exc: Exception) {
-                                            exc.printStackTrace()
-                                        }
-                                    }, ContextCompat.getMainExecutor(context))
-
-                                    previewView
+                            IconButton(
+                                onClick = {
+                                    flashEnabled = !flashEnabled
+                                    camera?.cameraControl?.enableTorch(flashEnabled)
                                 },
-                                modifier = Modifier.fillMaxSize()
-                            )
-
-                            // Overlay with scan area guide
-                            Box(
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(24.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.9f)
-                                        .height(100.dp)
-                                        .align(Alignment.Center)
-                                        .border(
-                                            width = 2.dp,
-                                            color = Color.White,
-                                            shape = RoundedCornerShape(8.dp)
-                                        )
-                                ) {
-                                    Text(
-                                        text = "Align license number here",
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier
-                                            .align(Alignment.TopCenter)
-                                            .background(Color.Black.copy(alpha = 0.5f))
-                                            .padding(4.dp)
+                                    .size(40.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                                        shape = RoundedCornerShape(8.dp)
                                     )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Button(
-                            onClick = { isScannerActive = false },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.errorContainer,
-                                contentColor = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                        ) {
-                            Text("Cancel Scan")
-                        }
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.CreditCard,
-                            contentDescription = "Driving License",
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-
-                        Spacer(modifier = Modifier.height(24.dp))
-
-                        if (dlNumber.isNotEmpty()) {
-                            Text(
-                                text = "Scanned License Number:",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                )
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = dlNumber,
-                                        style = MaterialTheme.typography.titleLarge,
-                                        fontWeight = FontWeight.Bold
-                                    )
-
-                                    AnimatedVisibility(
-                                        visible = validInput,
-                                        enter = fadeIn(),
-                                        exit = fadeOut()
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "Valid",
-                                            tint = Color(0xFF00C853)
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            Text(
-                                text = "No license number scanned yet",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(32.dp))
-
-                        Button(
-                            onClick = {
-                                if (!hasCameraPermission) {
-                                    cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-                                } else {
-                                    isScannerActive = true
-                                    errorMessage = ""
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.PhotoCamera,
-                                    contentDescription = "Scan License"
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Scan License")
-                            }
-                        }
-
-                        AnimatedVisibility(visible = errorMessage.isNotEmpty()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Error,
-                                    contentDescription = "Error",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = errorMessage,
-                                    color = MaterialTheme.colorScheme.error,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(start = 8.dp)
+                                    imageVector = Icons.Filled.FlashOn,
+                                    contentDescription = "Toggle Flash",
+                                    tint = if (flashEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -421,81 +240,213 @@ fun LicenseVerificationScreen(navController: NavController) {
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Button row with verify and skip options
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(top = 16.dp),
+                contentAlignment = Alignment.Center
             ) {
-                // Verify button
-                Button(
-                    onClick = {
-                        if (!isValidDrivingLicense(dlNumber)) {
-                            errorMessage = "Please scan a valid driving license number"
-                        } else {
-                            isLoading = true
-
-                            // Simulate verification briefly
-                            coroutineScope.launch {
-                                kotlinx.coroutines.delay(800)
-
-                                // Save DL number to pass to next screen
-                                navController.currentBackStackEntry?.savedStateHandle?.set("dlNumber", dlNumber)
-                                navController.navigate("main_screen")
-                                isLoading = false
-                            }
-                        }
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    ),
-                    enabled = !isLoading && validInput
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        if (isLoading) {
+                when (detectionState) {
+                    is DetectionState.Scanning -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.background(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(20.dp))
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
                             CircularProgressIndicator(
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
                             )
-                        } else {
-                            Text(
-                                "Verify & Continue",
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.Bold
-                                )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Scanning...", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                    is DetectionState.Success -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.background(
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                                shape = RoundedCornerShape(20.dp))
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.tertiary
                             )
+                            Spacer(Modifier.width(8.dp))
+                            Text("License detected", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                        }
+                    }
+                    is DetectionState.Error -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.background(
+                                color = MaterialTheme.colorScheme.errorContainer,
+                                shape = RoundedCornerShape(20.dp))
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Outlined.ErrorOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.width(8.dp))
+                            Text((detectionState as DetectionState.Error).message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer)
                         }
                     }
                 }
+            }
 
-                // Skip button
+            Spacer(Modifier.weight(1f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
                 OutlinedButton(
                     onClick = {
-                        navController.navigate("main_screen")
+                        licenseNumber = ""
+                        expiryDate = ""
+                        holderName = ""
+                        detectionState = DetectionState.Scanning
+                        scanTimeoutActive = true
                     },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(vertical = 16.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
                 ) {
+                    Icon(Icons.Outlined.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Retry Scan")
+                }
+
+                Button(
+                    onClick = {
+                        if (licenseNumber.isNotEmpty()) {
+                            isLoading = true
+
+                            // Get user ID
+                            val userId = auth.currentUser?.uid
+                            if (userId != null) {
+                                // Get previous data from navigation/argument state
+                                val aadhaarNumber = navController.previousBackStackEntry?.savedStateHandle?.get<String>("aadhaarNumber") ?: ""
+                                val panNumber = navController.previousBackStackEntry?.savedStateHandle?.get<String>("panNumber") ?: ""
+                                val name = navController.previousBackStackEntry?.savedStateHandle?.get<String>("name") ?: ""
+
+                                // Create user document
+                                val userData = hashMapOf(
+                                    "name" to name,
+                                    "aadhaarNumber" to aadhaarNumber,
+                                    "panNumber" to panNumber,
+                                    "licenseNumber" to licenseNumber,
+                                    "expiryDate" to expiryDate,
+                                    "onboardingComplete" to true,
+                                    "updatedAt" to Timestamp.now()
+                                )
+
+                                // Save to Firestore
+                                db.collection("users").document(userId)
+                                    .update(userData as Map<String, Any>)
+                                    .addOnSuccessListener {
+                                        isLoading = false
+                                        navController.navigate("main") {
+                                            popUpTo("welcome") { inclusive = true }
+                                        }
+                                    }
+                                    .addOnFailureListener { e ->
+                                        isLoading = false
+                                        detectionState = DetectionState.Error(e.message ?: "Failed to save data")
+                                    }
+                            } else {
+                                isLoading = false
+                                detectionState = DetectionState.Error("User not authenticated")
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(vertical = 16.dp),
+                    enabled = !isLoading && detectionState is DetectionState.Success,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        Text("Complete")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CameraPermissionRequired(onRequestPermission: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(Icons.Outlined.CameraAlt, contentDescription = null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(16.dp))
+        Text("Camera Permission Required", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text("To scan your driving license, we need access to your camera", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onRequestPermission, modifier = Modifier.fillMaxWidth(0.7f)) {
+            Text("Grant Permission")
+        }
+    }
+}
+
+@Composable
+private fun LicenseResultView(licenseNumber: String, expiryDate: String, holderName: String) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(16.dp))
+                Text("License Detected", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    text = licenseNumber,
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
+                    color = MaterialTheme.colorScheme.primary
+                )
+                if (expiryDate.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
                     Text(
-                        "Skip & Complete",
-                        style = MaterialTheme.typography.titleMedium
+                        text = "Expires: $expiryDate",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (holderName.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = holderName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -503,25 +454,144 @@ fun LicenseVerificationScreen(navController: NavController) {
     }
 }
 
+@Composable
+private fun CameraPreview(
+    flashEnabled: Boolean,
+    onCameraReady: (Camera) -> Unit,
+    processImageForLicense: (ImageProxy) -> Unit
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    AndroidView(
+        factory = { ctx ->
+            val previewView = PreviewView(ctx).apply {
+                implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                scaleType = PreviewView.ScaleType.FILL_CENTER
+            }
+            val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+            cameraProviderFuture.addListener({
+                try {
+                    val cameraProvider = cameraProviderFuture.get()
+                    val preview = Preview.Builder()
+                        .build()
+                        .also { it.setSurfaceProvider(previewView.surfaceProvider) }
+
+                    val imageAnalyzer = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+
+                    setupImageAnalysis(imageAnalyzer, processImageForLicense)
+
+                    cameraProvider.unbindAll()
+                    val camera = cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        CameraSelector.DEFAULT_BACK_CAMERA,
+                        preview,
+                        imageAnalyzer
+                    )
+
+                    onCameraReady(camera)
+                    camera.cameraControl.enableTorch(flashEnabled)
+
+                } catch (e: Exception) {
+                    Log.e("Camera", "Binding failed", e)
+                }
+            }, ContextCompat.getMainExecutor(ctx))
+
+            previewView
+        },
+        modifier = Modifier.fillMaxSize()
+    )
+}
+
+private fun setupImageAnalysis(
+    imageAnalyzer: ImageAnalysis,
+    processImageForLicense: (ImageProxy) -> Unit
+) {
+    var frameCount = 0
+    val frameInterval = 3 // process every third frame
+
+    imageAnalyzer.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+        frameCount++
+        if (frameCount % frameInterval == 0) {
+            processImageForLicense(imageProxy)
+        } else {
+            imageProxy.close()
+        }
+    }
+}
+
+
+
 @androidx.annotation.OptIn(ExperimentalGetImage::class)
-private fun processImageProxy(
+@OptIn(ExperimentalGetImage::class)
+private fun processImageForLicense(
     imageProxy: ImageProxy,
     textRecognizer: TextRecognizer,
-    onTextRecognized: (text: com.google.mlkit.vision.text.Text) -> Unit
+    onResult: (String, String, String) -> Unit
 ) {
     val mediaImage = imageProxy.image ?: run {
         imageProxy.close()
+        onResult("", "", "")
         return
     }
 
-    val image = InputImage.fromMediaImage(
-        mediaImage,
-        imageProxy.imageInfo.rotationDegrees
-    )
+    val inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
 
-    textRecognizer.process(image)
-        .addOnSuccessListener { text ->
-            onTextRecognized(text)
+    textRecognizer.process(inputImage)
+        .addOnSuccessListener { visionText ->
+            val text = visionText.text ?: ""
+
+            // License number patterns (adjust based on your region)
+            // Example patterns for Indian DL: StateCode-RTO Code-Year-Serial Number
+            val licensePatterns = listOf(
+                Pattern.compile("[A-Z]{2}[0-9]{2}[0-9]{11}"), // Standard Indian DL format
+                Pattern.compile("[A-Z]{2}-[0-9]{13}"), // Alternative format
+                Pattern.compile("[A-Z]{2}[0-9]{14}") // Compact format
+            )
+
+            var detectedLicense = ""
+            for (pattern in licensePatterns) {
+                val matcher = pattern.matcher(text.replace("\\s".toRegex(), ""))
+                if (matcher.find()) {
+                    detectedLicense = matcher.group()
+                    break
+                }
+            }
+
+            // Date pattern for expiry (DD/MM/YYYY or DD-MM-YYYY)
+            val datePattern = Pattern.compile("\\b(0[1-9]|[12][0-9]|3[01])[-/](0[1-9]|1[0-2])[-/](19|20)\\d{2}\\b")
+            val dateMatcher = datePattern.matcher(text)
+            var detectedExpiry = ""
+            if (dateMatcher.find()) {
+                detectedExpiry = dateMatcher.group()
+            }
+
+            // Extract name (similar logic to PAN card)
+            val lines = text.lines()
+            var detectedName = ""
+
+            for (line in lines) {
+                if (line.contains("Name:", ignoreCase = true) ||
+                    line.contains("Holder:", ignoreCase = true) ||
+                    line.contains("Driver:", ignoreCase = true)) {
+                    detectedName = line.substringAfter(":").trim()
+                    break
+                } else if (line.isNotBlank() &&
+                    !licensePatterns.any { it.matcher(line).find() } &&
+                    !datePattern.matcher(line).find() &&
+                    line.length > 3) {
+                    detectedName = line.trim()
+                    break
+                }
+            }
+
+            onResult(detectedLicense, detectedExpiry, detectedName)
+        }
+        .addOnFailureListener {
+            Log.e("MLKit", "Text recognition failed", it)
+            onResult("", "", "")
         }
         .addOnCompleteListener {
             imageProxy.close()

@@ -410,7 +410,7 @@ fun DarkSecurityHeader() {
         )
 
         Text(
-            text = "End-to-end encrypted • TLS 1.3",
+            text = "End-to-end encrypted • AES-256",
             style = MaterialTheme.typography.bodyMedium,
             color = BlueAccent,
             textAlign = TextAlign.Center,

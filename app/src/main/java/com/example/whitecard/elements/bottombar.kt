@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.CropFree
 
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
@@ -46,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.launch
 
 @Composable
@@ -96,7 +99,7 @@ fun BottomNavigation(navController: NavController) {
                 )
 
                 BottomNavItem(
-                    icon = Icons.Default.Person,
+                    icon = Icons.Default.AspectRatio,
                     label = "Templates",
                     onClick = { navController.navigate("card_templates") }
                 )
@@ -140,7 +143,7 @@ fun BottomNavigation(navController: NavController) {
 
         ) {
             Icon(
-                imageVector = Icons.Filled.AccountBox,
+                imageVector = Icons.Filled.CropFree,
                 contentDescription = "Scan QR Code",
                 modifier = Modifier.size(28.dp)
             )
@@ -148,6 +151,7 @@ fun BottomNavigation(navController: NavController) {
     }
 }
 
+@OptIn(DelicateCoroutinesApi::class)
 @Composable
 fun BottomNavItem(
     icon: ImageVector,

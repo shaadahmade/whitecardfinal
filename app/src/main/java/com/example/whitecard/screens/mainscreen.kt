@@ -522,7 +522,7 @@ fun InteractiveVirtualIdCard(
                     )
                 }
 
-                Column(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.weight(1.1f)) {
                     IdDetailField(
                         label = "DL NUMBER",
                         value = userData["licenseNumber"]?.takeIf { it != "N/A" } ?: "Not Verified",
@@ -539,7 +539,7 @@ fun InteractiveVirtualIdCard(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(2.dp))
 
             // QR Button
             Button(

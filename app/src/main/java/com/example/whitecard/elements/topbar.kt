@@ -118,34 +118,12 @@ fun WhiteCardTopBar(navController: NavController, viewModel: mainscreenviewmlode
 
 
                     ) {
-                        MenuItem(
-                            icon = Icons.Default.Person,
-                            title = "Profile",
-                            onClick = {
-                                navController.navigate("profile")
-                                showMenu = false
-                            }
-                        )
 
-                        MenuItem(
-                            icon = Icons.Default.Settings,
-                            title = "Settings",
-                            onClick = {
-                                navController.navigate("settings")
-                                showMenu = false
-                            }
-                        )
 
-                        MenuItem(
-                            icon = Icons.Default.Info,
-                            title = "About Us",
-                            onClick = {
-                                navController.navigate("about_us")
-                                showMenu = false
-                            }
-                        )
 
-                        Divider(color = Color.Gray.copy(alpha = 0.5f))
+
+
+
 
                         MenuItem(
                             icon = Icons.Default.Logout,
